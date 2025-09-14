@@ -15,10 +15,10 @@ export default function HomePage() {
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground mb-6 text-balance">
               관심있는 동네를 고르면,
               <br />
-              <span className="text-primary">그 동네 축제를 픽해드려요</span>
+              <span className="text-primary">동네 축제를 픽해드려요</span>
             </h1>
             <p className="text-xl text-muted-foreground mb-8 text-pretty max-w-2xl mx-auto">
-              바쁜 일상을 보내느라 주말에 뭐 할지 몰라 고민하셨나요?
+              바쁜 일상을 보내느라 주말에 뭐 할지 고민하셨나요?
               <br />
               픽동과 함께 우리 동네 재밌는 행사를 놓치지 마세요!
             </p>

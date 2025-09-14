@@ -39,16 +39,18 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 to-accent/5 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        {/* Logo and Title */}
-        <div className="text-center mb-8">
-          <div className="w-40 h-40 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <img src="/pickdong-logo.png" alt="픽동" />
-          </div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">픽동에 오신 것을 환영합니다</h1>
-          <p className="text-muted-foreground">관심있는 동네를 구독하고 재밌는 축제를 발견해보세요</p>
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 to-accent/5 flex items-start justify-center p-4 pt-12 sm:items-center sm:pt-0">
+  <div className="w-full max-w-md">
+    {/* Logo and Title */}
+    <div className="text-center mb-6">
+      <div className="w-24 h-32 sm:w-40 sm:h-40 rounded-2xl flex items-center justify-center mx-auto mb-4">
+        <img src="/pickdong-logo.png" alt="픽동" />
+      </div>
+      <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-2">픽동에 오신 것을 환영합니다</h1>
+      <p className="text-muted-foreground text-sm sm:text-base">
+        관심있는 동네를 구독하고 재밌는 축제를 발견해보세요
+      </p>
+    </div>
 
         {/* Login Card */}
         <Card className="shadow-lg">
