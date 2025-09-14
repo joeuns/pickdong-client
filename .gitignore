@@ -28,3 +28,4 @@ next-env.d.ts
 
 # README
 lib/services/README.md
+.DS_Store
