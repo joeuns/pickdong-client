@@ -47,7 +47,7 @@ apiClient.interceptors.response.use(
       // 인증 실패 시 로그아웃 처리
       localStorage.removeItem('pickdong_token')
       localStorage.removeItem('pickdong_user')
-      window.location.href = '/login'
+      window.location.href = '/auth/session-expired'
     }
     return Promise.reject(error)
   }
