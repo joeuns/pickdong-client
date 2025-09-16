@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,8 +28,9 @@ import {
   updateSubscription,
 } from "@/lib/services/subscription";
 import { getEventsBySubscribedAreas, type Tour } from "@/lib/services/events";
+import { Footer } from "@/components/footer";
 
-// Mock data removed - now using real API calls
+const PAGE_SIZE = 10; // keep in sync with backend if possible
 
 export default function MyPage() {
   const { user, logout, isLoading } = useAuth();
@@ -38,15 +39,20 @@ export default function MyPage() {
     emailSubscribe: emailNotifications,
     setEmailSubscribe: setEmailNotifications,
   } = useEmailSubscribe(true);
+
   const [tours, setTours] = useState<Tour[]>([]);
-  const [visibleEvents, setVisibleEvents] = useState(6);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
   const [subscribedRegions, setSubscribedRegions] = useState<
     Record<string, string[]>
   >({});
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
   const [hasNext, setHasNext] = useState(false);
+  const [page, setPage] = useState(0); // current loaded page index
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // sentinel for IntersectionObserver
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
   // Redirect if not logged in (wait for auth init)
   useEffect(() => {
@@ -56,31 +62,32 @@ export default function MyPage() {
     }
   }, [user, isLoading, isLoggingOut, router]);
 
-  // Load subscriptions and events on mount
+  // Load subscriptions & first page
   useEffect(() => {
-    const loadData = async () => {
+    const loadInitial = async () => {
       if (!user) return;
-
       try {
         setIsLoadingEvents(true);
 
-        // Load subscriptions
+        // Load subscriptions -> subscribedRegions map
         const subscriptions = await getSubscriptions();
         const regionsMap: Record<string, string[]> = {};
-        subscriptions.areas.forEach((area) => {
+        subscriptions.areas.forEach((area: any) => {
           const subscribedSubAreas = area.subAreas
-            .filter((subArea) => subArea.subscribe)
-            .map((subArea) => subArea.name);
+            .filter((subArea: any) => subArea.subscribe)
+            .map((subArea: any) => subArea.name);
           if (subscribedSubAreas.length > 0) {
             regionsMap[area.name] = subscribedSubAreas;
           }
         });
         setSubscribedRegions(regionsMap);
 
-        // Load tours for subscribed areas
-        const toursData = await getEventsBySubscribedAreas(0);
+        // First page load
+        const firstPage = 0;
+        const toursData = await getEventsBySubscribedAreas(firstPage);
         setTours(toursData.tours);
         setHasNext(toursData.metaData.hasNext);
+        setPage(firstPage);
       } catch (error) {
         console.error("데이터 로딩 실패:", error);
       } finally {
@@ -88,66 +95,110 @@ export default function MyPage() {
       }
     };
 
-    loadData();
+    loadInitial();
   }, [user]);
 
-  // Load more tours (pagination)
-  const loadMoreEvents = async () => {
-    if (!hasNext || isLoadingEvents) return;
+  const appendTours = useCallback((incoming: Tour[]) => {
+    // Deduplicate by tourId when appending pages
+    setTours((prev) => {
+      const seen = new Set(prev.map((t) => t.tourId));
+      const merged = [...prev];
+      for (const t of incoming) {
+        if (!seen.has(t.tourId)) {
+          merged.push(t);
+          seen.add(t.tourId);
+        }
+      }
+      return merged;
+    });
+  }, []);
 
+  const loadMore = useCallback(async () => {
+    if (isLoadingEvents || !hasNext) return;
     try {
       setIsLoadingEvents(true);
-      const nextPage = Math.floor(tours.length / 10); // Assuming 10 items per page
+      const nextPage = page + 1;
       const toursData = await getEventsBySubscribedAreas(nextPage);
-      setTours((prev) => [...prev, ...toursData.tours]);
+      appendTours(toursData.tours);
       setHasNext(toursData.metaData.hasNext);
-    } catch (error) {
-      console.error("추가 투어 로딩 실패:", error);
+      setPage(nextPage);
+    } catch (e) {
+      console.error("추가 투어 로딩 실패:", e);
     } finally {
       setIsLoadingEvents(false);
     }
-  };
+  }, [appendTours, hasNext, isLoadingEvents, page]);
 
+  // IntersectionObserver setup
   useEffect(() => {
-    const handleScroll = () => {
-      if (
-        window.innerHeight + document.documentElement.scrollTop !==
-        document.documentElement.offsetHeight
-      )
-        return;
-      loadMoreEvents();
-    };
+    if (!sentinelRef.current) return;
 
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, [tours.length, hasNext, isLoadingEvents]);
+    // cleanup existing observer before creating a new one
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry.isIntersecting) {
+          // request next page
+          // guard by flags to avoid bursts
+          if (!isLoadingEvents && hasNext) {
+            void loadMore();
+          }
+        }
+      },
+      {
+        root: null,
+        rootMargin: "200px", // prefetch a bit before hitting the bottom
+        threshold: 0,
+      }
+    );
+
+    observerRef.current.observe(sentinelRef.current);
+
+    return () => {
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+    };
+  }, [loadMore, hasNext, isLoadingEvents]);
+
+  // Unsubscribe / Subscribe handlers keep same behavior but reset list to page 0 after mutation
+  const reloadFirstPage = useCallback(async () => {
+    try {
+      setIsLoadingEvents(true);
+      const toursData = await getEventsBySubscribedAreas(0);
+      setTours(toursData.tours);
+      setHasNext(toursData.metaData.hasNext);
+      setPage(0);
+    } catch (e) {
+      console.error("리로드 실패", e);
+    } finally {
+      setIsLoadingEvents(false);
+    }
+  }, []);
 
   const handleUnsubscribe = async (city: string, district: string) => {
     try {
-      // Find area and subArea codes from subscriptions
       const subscriptions = await getSubscriptions();
-      const area = subscriptions.areas.find((a) => a.name === city);
-      const subArea = area?.subAreas.find((sa) => sa.name === district);
+      const area = subscriptions.areas.find((a: any) => a.name === city);
+      const subArea = area?.subAreas.find((sa: any) => sa.name === district);
 
       if (area && subArea) {
         await updateSubscription(area.areaCode, subArea.sigunGuCode, false);
 
-        // Update local state
         setSubscribedRegions((prev) => {
-          const newRegions = { ...prev };
-          if (newRegions[city]) {
-            newRegions[city] = newRegions[city].filter((d) => d !== district);
-            if (newRegions[city].length === 0) {
-              delete newRegions[city];
-            }
+          const next = { ...prev } as Record<string, string[]>;
+          if (next[city]) {
+            next[city] = next[city].filter((d) => d !== district);
+            if (next[city].length === 0) delete next[city];
           }
-          return newRegions;
+          return next;
         });
 
-        // Reload tours
-        const toursData = await getEventsBySubscribedAreas(0);
-        setTours(toursData.tours);
-        setHasNext(toursData.metaData.hasNext);
+        await reloadFirstPage();
       }
     } catch (error) {
       console.error("구독 해제 실패:", error);
@@ -156,30 +207,22 @@ export default function MyPage() {
 
   const handleSubscribe = async (city: string, district: string) => {
     try {
-      // Find area and subArea codes from subscriptions
       const subscriptions = await getSubscriptions();
-      const area = subscriptions.areas.find((a) => a.name === city);
-      const subArea = area?.subAreas.find((sa) => sa.name === district);
+      const area = subscriptions.areas.find((a: any) => a.name === city);
+      const subArea = area?.subAreas.find((sa: any) => sa.name === district);
 
       if (area && subArea) {
         await updateSubscription(area.areaCode, subArea.sigunGuCode, true);
 
-        // Update local state
         setSubscribedRegions((prev) => {
-          const newRegions = { ...prev };
-          if (!newRegions[city]) {
-            newRegions[city] = [];
-          }
-          if (!newRegions[city].includes(district)) {
-            newRegions[city] = [...newRegions[city], district];
-          }
-          return newRegions;
+          const next = { ...prev } as Record<string, string[]>;
+          if (!next[city]) next[city] = [];
+          if (!next[city].includes(district))
+            next[city] = [...next[city], district];
+          return next;
         });
 
-        // Reload tours
-        const toursData = await getEventsBySubscribedAreas(0);
-        setTours(toursData.tours);
-        setHasNext(toursData.metaData.hasNext);
+        await reloadFirstPage();
       }
     } catch (error) {
       console.error("구독 실패:", error);
@@ -195,7 +238,6 @@ export default function MyPage() {
   const handleDeleteAccount = async () => {
     try {
       await deleteMember();
-      // clear auth and redirect
       logout();
       window.location.replace("/");
     } catch (e) {
@@ -203,9 +245,7 @@ export default function MyPage() {
     }
   };
 
-  if (!user) {
-    return null; // or loading spinner
-  }
+  if (!user) return null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -230,7 +270,6 @@ export default function MyPage() {
                     </p>
                   </div>
 
-                  {/* 이메일 주소 표시 */}
                   <div className="bg-muted/50 rounded-lg p-3 mb-4">
                     <div className="text-center">
                       <p className="text-sm text-muted-foreground mb-1">
@@ -244,7 +283,6 @@ export default function MyPage() {
                 </div>
 
                 <div className="space-y-4">
-                  {/* Email Notifications Toggle */}
                   <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
                     <div>
                       <span className="text-sm font-medium">
@@ -260,7 +298,6 @@ export default function MyPage() {
                     />
                   </div>
 
-                  {/* Subscription Management */}
                   <Button
                     variant="outline"
                     className="w-full justify-start bg-transparent"
@@ -270,7 +307,6 @@ export default function MyPage() {
                     구독 지역 관리하기
                   </Button>
 
-                  {/* Account Actions */}
                   <div className="pt-4 border-t space-y-2">
                     <Button
                       variant="ghost"
@@ -331,7 +367,7 @@ export default function MyPage() {
                 </div>
 
                 {/* Events Grid */}
-                {isLoadingEvents ? (
+                {isLoadingEvents && tours.length === 0 ? (
                   <div className="text-center py-8">
                     <div className="inline-flex items-center space-x-2 text-muted-foreground">
                       <div className="w-2 h-2 bg-primary rounded-full animate-bounce"></div>
@@ -358,113 +394,106 @@ export default function MyPage() {
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {tours.slice(0, visibleEvents).map((tour) => (
-                      <Card
-                        key={tour.tourId}
-                        className="overflow-hidden hover:shadow-lg transition-shadow group"
-                      >
-                        {/* 이미지 영역 */}
-                        <div className="aspect-[4/3] bg-muted relative overflow-hidden">
-                          <img
-                            src={tour.mainImageUrl || "/placeholder.svg"}
-                            alt={tour.title}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          />
-                        </div>
-
-                        {/* 콘텐츠 영역 */}
-                        <div className="p-4 space-y-2">
-                          {/* 제목 */}
-                          <h3 className="text-lg font-semibold text-foreground line-clamp-1 -mt-1">
-                            {tour.title}
-                          </h3>
-
-                          {/* 날짜 */}
-                          <div className="flex items-center text-sm text-muted-foreground">
-                            <Calendar className="w-4 h-4 mr-2" />
-                            <span>
-                              {tour.startDate === tour.endDate
-                                ? tour.startDate
-                                : `${tour.startDate} - ${tour.endDate}`}
-                            </span>
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {tours.map((tour) => (
+                        <Card
+                          key={tour.tourId}
+                          className="overflow-hidden hover:shadow-lg transition-shadow group"
+                        >
+                          {/* 이미지 영역 */}
+                          <div className="aspect-[4/3] bg-muted relative overflow-hidden">
+                            <img
+                              src={tour.mainImageUrl || "/placeholder.svg"}
+                              alt={tour.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            />
                           </div>
 
-                          {/* 위치 */}
-                          <div className="flex items-center text-sm text-muted-foreground">
-                            <MapPin className="w-4 h-4 mr-2" />
-                            <span>
-                              {tour.area} {tour.sigunGu}
-                            </span>
-                          </div>
+                          {/* 콘텐츠 영역 */}
+                          <div className="p-4 space-y-2">
+                            <h3 className="text-lg font-semibold text-foreground line-clamp-1 -mt-1">
+                              {tour.title}
+                            </h3>
 
-                          {/* 키워드 - 3개씩 표시 */}
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            {tour.keywords.slice(0, 3).map((keyword, index) => (
-                              <Badge
-                                key={index}
-                                variant="secondary"
-                                className="text-xs bg-primary/10 text-primary hover:bg-primary/20"
+                            <div className="flex items-center text-sm text-muted-foreground">
+                              <Calendar className="w-4 h-4 mr-2" />
+                              <span>
+                                {tour.startDate === tour.endDate
+                                  ? tour.startDate
+                                  : `${tour.startDate} - ${tour.endDate}`}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center text-sm text-muted-foreground">
+                              <MapPin className="w-4 h-4 mr-2" />
+                              <span>
+                                {tour.area} {tour.sigunGu}
+                              </span>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1 pt-1">
+                              {tour.keywords
+                                .slice(0, 3)
+                                .map((keyword, index) => (
+                                  <Badge
+                                    key={index}
+                                    variant="secondary"
+                                    className="text-xs bg-primary/10 text-primary hover:bg-primary/20"
+                                  >
+                                    {keyword}
+                                  </Badge>
+                                ))}
+                            </div>
+
+                            <div className="pt-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full bg-transparent"
+                                onClick={() =>
+                                  router.push(`/event/${tour.tourId}`)
+                                }
                               >
-                                {keyword}
-                              </Badge>
-                            ))}
+                                자세히 보기
+                              </Button>
+                            </div>
                           </div>
-
-                          <div className="pt-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="w-full bg-transparent"
-                              onClick={() =>
-                                router.push(`/event/${tour.tourId}`)
-                              }
-                            >
-                              자세히 보기
-                            </Button>
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-
-                {/* Loading More Indicator */}
-                {!isLoadingEvents && hasNext && (
-                  <div className="text-center py-8">
-                    <div className="inline-flex items-center space-x-2 text-muted-foreground">
-                      <div className="w-2 h-2 bg-primary rounded-full animate-bounce"></div>
-                      <div
-                        className="w-2 h-2 bg-primary rounded-full animate-bounce"
-                        style={{ animationDelay: "0.1s" }}
-                      ></div>
-                      <div
-                        className="w-2 h-2 bg-primary rounded-full animate-bounce"
-                        style={{ animationDelay: "0.2s" }}
-                      ></div>
-                      <span className="ml-2 text-sm">
-                        더 많은 행사를 불러오는 중...
-                      </span>
+                        </Card>
+                      ))}
                     </div>
-                  </div>
-                )}
 
-                {/* End of Content */}
-                {!isLoadingEvents && !hasNext && tours.length > 0 && (
-                  <div className="text-center py-8">
-                    <p className="text-muted-foreground">
-                      모든 행사를 확인했습니다
-                    </p>
-                  </div>
-                )}
+                    {/* Sentinel for infinite scroll */}
+                    <div ref={sentinelRef} className="h-10" />
 
-                {/* Scroll Hint */}
-                {!isLoadingEvents && hasNext && (
-                  <div className="text-center py-4">
-                    <p className="text-sm text-muted-foreground">
-                      아래로 스크롤하여 더 많은 행사를 확인하세요
-                    </p>
-                  </div>
+                    {/* Loading / Status Indicators */}
+                    {isLoadingEvents && tours.length > 0 && (
+                      <div className="text-center py-6">
+                        <div className="inline-flex items-center space-x-2 text-muted-foreground">
+                          <div className="w-2 h-2 bg-primary rounded-full animate-bounce"></div>
+                          <div
+                            className="w-2 h-2 bg-primary rounded-full animate-bounce"
+                            style={{ animationDelay: "0.1s" }}
+                          ></div>
+                          <div
+                            className="w-2 h-2 bg-primary rounded-full animate-bounce"
+                            style={{ animationDelay: "0.2s" }}
+                          ></div>
+                          <span className="ml-2 text-sm">
+                            더 많은 행사를 불러오는 중...
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {!isLoadingEvents && !hasNext && tours.length > 0 && (
+                      <div className="text-center py-8">
+                        <p className="text-muted-foreground">
+                          모든 행사를 확인했습니다
+                        </p>
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -481,25 +510,6 @@ export default function MyPage() {
       />
 
       <Footer />
-      <footer className="bg-muted/30 py-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center">
-            <div className="flex items-center justify-center space-x-2 mb-4">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center">
-                <img src="/pickdong-logo.png" alt="픽동" className="w-8 h-8" />
-              </div>
-              <span className="text-xl font-bold text-foreground">픽동</span>
-            </div>
-            <p className="text-muted-foreground mb-8 max-w-2xl mx-auto">
-              관심있는 동네를 고르면, 그 동네에서 열리는 축제를 픽해드려요. 우리
-              동네 재밌는 행사를 놓치지 마세요!
-            </p>
-            <div className="text-sm text-muted-foreground">
-              © 2025 픽동. All rights reserved.
-            </div>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }
