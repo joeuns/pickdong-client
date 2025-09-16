@@ -326,7 +326,7 @@ export default function MyPage() {
                     구독 지역의 축제
                   </h1>
                   <p className="text-muted-foreground">
-                    구독하신 지역에서 열리는 다양한 행사들을 확인해보세요
+                    구독하신 지역에서 현재 진행되는 다양한 행사들을 확인해보세요
                   </p>
                 </div>
 
