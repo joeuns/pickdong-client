@@ -411,7 +411,7 @@ export default function MyPage() {
                           </div>
 
                           {/* 콘텐츠 영역 */}
-                          <div className="p-4 space-y-2">
+                          <div className="p-0 px-4 space-y-2">
                             <h3 className="text-lg font-semibold text-foreground line-clamp-1 -mt-1">
                               {tour.title}
                             </h3>
@@ -450,7 +450,7 @@ export default function MyPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className="w-full bg-transparent"
+                                className="w-full h-12 bg-transparent"
                                 onClick={() =>
                                   router.push(`/event/${tour.tourId}`)
                                 }
