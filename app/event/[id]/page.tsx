@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast"
 import { getTourDetail } from "@/lib/services/tour"
 import { TourDetail } from "@/lib/types"
 import { Header } from "@/components/header"
+import parse from "html-react-parser"
 
 
 export default function EventDetailPage() {
@@ -22,6 +23,33 @@ export default function EventDetailPage() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [copied, setCopied] = useState(false)
   const { toast } = useToast()
+
+  const SafeHtml = ({ html, className }: { html?: string | null; className?: string }) => {
+    const [content, setContent] = useState<React.ReactNode>(null)
+
+    useEffect(() => {
+      if (!html) {
+        setContent(null)
+        return
+      }
+      let mounted = true
+      import('isomorphic-dompurify')
+        .then((mod) => {
+          const DOMPurify = mod.default || mod
+          const sanitized = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } })
+          if (mounted) setContent(parse(sanitized))
+        })
+        .catch(() => {
+          // 폴백: sanitize에 실패하면 원본을 파싱 (React가 스크립트 실행은 막지만, 링크 등은 클릭 시 위험할 수 있음)
+          if (mounted) setContent(parse(html))
+        })
+      return () => {
+        mounted = false
+      }
+    }, [html])
+
+    return <span className={className}>{content}</span>
+  }
 
   // API에서 투어 상세 정보 조회
   useEffect(() => {
@@ -195,21 +223,21 @@ export default function EventDetailPage() {
                     <Clock className="w-5 h-5 text-primary" />
                     <div>
                       <p className="font-medium">운영 시간</p>
-                      <p className="text-sm text-muted-foreground">{tourData.overview.businessHours}</p>
+                      <p className="text-sm text-muted-foreground"><SafeHtml html={tourData.overview.businessHours} /></p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-3">
                     <Clock className="w-5 h-5 text-primary" />
                     <div>
                       <p className="font-medium">예상 소요시간</p>
-                      <p className="text-sm text-muted-foreground">{tourData.overview.expectedDuration}</p>
+                      <p className="text-sm text-muted-foreground"><SafeHtml html={tourData.overview.expectedDuration} /></p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-3">
                     <DollarSign className="w-5 h-5 text-primary" />
                     <div>
                       <p className="font-medium">비용</p>
-                      <p className="text-sm text-muted-foreground">{tourData.overview.cost}</p>
+                      <p className="text-sm text-muted-foreground"><SafeHtml html={tourData.overview.cost} /></p>
                     </div>
                   </div>
                 </div>
@@ -226,7 +254,7 @@ export default function EventDetailPage() {
                   {tourData.detailInfo.map((info, index) => (
                     <div key={index} className="flex flex-col sm:flex-row sm:items-center">
                       <span className="font-medium text-foreground min-w-[100px] mb-1 sm:mb-0">{info.infoName}:</span>
-                      <span className="text-muted-foreground">{info.infoText}</span>
+                      <SafeHtml className="text-muted-foreground" html={info.infoText} />
                     </div>
                   ))}
                 </div>
@@ -260,7 +288,7 @@ export default function EventDetailPage() {
                     </div>
                     <div>
                       <p className="font-medium">연락처</p>
-                      <p className="text-muted-foreground">{tourData.directions.telephone}</p>
+                      <p className="text-muted-foreground"><SafeHtml html={tourData.directions.telephone} /></p>
                     </div>
                   </div>
                 </div>
